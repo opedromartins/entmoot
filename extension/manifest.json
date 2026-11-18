@@ -1,0 +1,64 @@
+{
+  "manifest_version": 3,
+  "name": "entmoot",
+  "version": "0.0.1",
+  "description": "Captura áudio, sinais de falante e legendas de reuniões e envia para o app local.",
+  "icons": { "32": "icons/32.png", "64": "icons/64.png", "128": "icons/128.png" },
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "entmoot@transcriptor.local.fi45j",
+      "strict_min_version": "142.0",
+      "data_collection_permissions": {
+        "required": ["personalCommunications", "websiteContent"]
+      }
+    }
+  },
+  "permissions": ["storage"],
+  "action": {
+    "default_title": "entmoot",
+    "default_icon": { "32": "icons/32.png", "64": "icons/64.png" },
+    "default_popup": "src/popup.html"
+  },
+  "host_permissions": [
+    "https://meet.google.com/*",
+    "https://teams.microsoft.com/*",
+    "https://teams.cloud.microsoft/*",
+    "https://teams.live.com/*"
+  ],
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'"
+  },
+  "web_accessible_resources": [
+    {
+      "resources": ["src/tap-worklet.js"],
+      "matches": ["https://teams.microsoft.com/*", "https://teams.cloud.microsoft/*", "https://teams.live.com/*"]
+    }
+  ],
+  "background": {
+    "scripts": ["src/meet-decode.js", "src/teams-decode.js", "src/background.js"]
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://meet.google.com/*"],
+      "js": ["src/page-meet.js", "src/page-hook.js"],
+      "run_at": "document_start",
+      "world": "MAIN"
+    },
+    {
+      "matches": ["https://teams.microsoft.com/*", "https://teams.cloud.microsoft/*", "https://teams.live.com/*"],
+      "js": ["src/page-teams.js", "src/page-hook.js"],
+      "run_at": "document_start",
+      "world": "MAIN"
+    },
+    {
+      "matches": [
+        "https://meet.google.com/*",
+        "https://teams.microsoft.com/*",
+        "https://teams.cloud.microsoft/*",
+        "https://teams.live.com/*"
+      ],
+      "js": ["src/settings.js", "src/content.js"],
+      "run_at": "document_start"
+    }
+  ]
+}

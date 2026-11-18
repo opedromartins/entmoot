@@ -1,0 +1,112 @@
+name: Release
+
+# Runs only when a version tag is pushed, never on ordinary commits:
+#   git tag v0.1.0 && git push origin v0.1.0
+# Needs the AMO credentials in the repository secrets WEB_EXT_API_KEY (JWT
+# issuer) and WEB_EXT_API_SECRET.
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  app:
+    name: Windows installer
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v6
+
+      # Mozilla signs each version only once and the installer carries its own
+      # number, so a tag that disagrees with the files stops here.
+      - name: Check that every version matches the tag
+        shell: pwsh
+        run: |
+          $version = $env:GITHUB_REF_NAME -replace '^v', ''
+          $cargo = { param($path) (Select-String -Path $path -Pattern '^version = "(.+)"' | Select-Object -First 1).Matches[0].Groups[1].Value }
+          $found = [ordered]@{
+            'extension/manifest.json'                   = (Get-Content extension/manifest.json -Raw | ConvertFrom-Json).version
+            'app/desktop/src-tauri/tauri.conf.json'     = (Get-Content app/desktop/src-tauri/tauri.conf.json -Raw | ConvertFrom-Json).version
+            'app/desktop/package.json'                  = (Get-Content app/desktop/package.json -Raw | ConvertFrom-Json).version
+            'app/desktop/src-tauri/Cargo.toml'          = & $cargo app/desktop/src-tauri/Cargo.toml
+            'app/core/Cargo.toml'                       = & $cargo app/core/Cargo.toml
+          }
+          $wrong = @($found.GetEnumerator() | Where-Object { $_.Value -ne $version })
+          foreach ($entry in $wrong) { Write-Host "::error file=$($entry.Key)::version is $($entry.Value), the tag says $version" }
+          if ($wrong.Count) { exit 1 }
+          # The release's text is this version's section of the changelog.
+          if (-not (Select-String -Path CHANGELOG.md -Pattern "^## $([regex]::Escape($version))\s*$" -Quiet)) {
+            Write-Host "::error file=CHANGELOG.md::no '## $version' section"
+            exit 1
+          }
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app/desktop/package-lock.json
+
+      - name: Install the interface's dependencies
+        working-directory: app/desktop
+        run: npm ci
+
+      - name: Build the installer
+        working-directory: app/desktop
+        run: npm run tauri build
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: installer
+          path: app/desktop/src-tauri/target/release/bundle/nsis/*-setup.exe
+          if-no-files-found: error
+
+  # Signing comes after the installer builds: it cannot be repeated for the
+  # same version, so everything that can fail goes first.
+  publish:
+    name: Sign the extension and publish
+    needs: app
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+
+      - name: Sign the extension at Mozilla
+        shell: pwsh
+        env:
+          WEB_EXT_API_KEY: ${{ secrets.WEB_EXT_API_KEY }}
+          WEB_EXT_API_SECRET: ${{ secrets.WEB_EXT_API_SECRET }}
+        run: ./extension/build.ps1 -Sign
+
+      # Kept apart from the release so the signed file survives if the next
+      # steps fail.
+      - uses: actions/upload-artifact@v7
+        with:
+          name: extension
+          path: extension/dist/entmoot.xpi
+          if-no-files-found: error
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: installer
+          path: installer
+
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          # This version's section of the changelog, without its heading; the
+          # generated notes add the link comparing it with the previous one.
+          awk -v v="$version" '/^## / { on = ($2 == v); next } on' CHANGELOG.md > notes.md
+          gh release create "$GITHUB_REF_NAME" extension/dist/entmoot.xpi installer/*-setup.exe \
+            --title "entmoot $version" --notes-file notes.md --generate-notes --verify-tag

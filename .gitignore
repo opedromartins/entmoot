@@ -1,0 +1,26 @@
+# Dependências e saídas de build
+node_modules/
+target/
+dist/
+**/src-tauri/gen/
+__pycache__/
+*.tsbuildinfo
+
+# Estado do envio à Mozilla (web-ext sign) e os pacotes que ele baixa
+.amo-upload-uuid
+web-ext-artifacts/
+
+# Dados locais:
+/models/
+/recordings/
+/data/
+
+# Ambiente e editor
+.env
+.env.*
+*.log
+.vscode/
+.idea/
+.claude/settings.local.json
+Thumbs.db
+.DS_Store
